@@ -9,17 +9,23 @@ A simple terminal-based Python tool for calculating corrected orifice diameters 
 ```
 ┌────────────────────────────────────────────────────────┐
 │                    main.py (CLI)                       │
-│         User input → Results output to terminal        │
+│    4 modes: flow calc, table, props, correction       │
 └────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌────────────────────────────────────────────────────────┐
-│                   calibrator.py                        │
+│              src/calibrator.py (Core)                  │
 │  ┌──────────────┐  ┌─────────────┐  ┌──────────────┐  │
 │  │ Oil Props    │  │  Orifice    │  │  Correction  │  │
 │  │ (viscosity,  │  │  Equations  │  │  Factors     │  │
-│  │  density)    │  │  (ΔP, flow) │  │              │  │
+│  │  density)    │  │  (ΔP, flow) │  │  & Sizing    │  │
 │  └──────────────┘  └─────────────┘  └──────────────┘  │
+└────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌────────────────────────────────────────────────────────┐
+│           tests/test_calibrator.py                     │
+│              32 unit tests (TDD)                       │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -85,26 +91,49 @@ Where:
 ## File Structure
 
 ```
-eletta_calibration/
-├── main.py           # CLI entry point
-├── calibrator.py     # All calculation logic
+flow_sensor_calibration/
+├── main.py                    # CLI entry point (4 modes)
+├── src/
+│   ├── __init__.py
+│   └── calibrator.py          # All calculation logic
+├── tests/
+│   ├── __init__.py
+│   └── test_calibrator.py     # 32 unit tests
 ├── README.md
 ├── architecture.md
-└── todo.md
+├── todo.md
+├── pyproject.toml             # Ruff, pytest, mypy config
+├── requirements.txt           # Production (empty)
+├── requirements-dev.txt       # Development (pytest)
+└── CLAUDE.md                  # Python guidelines
 ```
 
-## Usage Examples
+## CLI Modes
 
+### 1. Single Point Calculation
 ```bash
-# Single calculation
-python main.py --oil VG220 --temp 50 --flow 150
-
-# Generate table for flow range
-python main.py --oil VG320 --temp 40 --flow-range 10 250
-
-# Show fluid properties only
-python main.py --oil VG220 --temp 60 --props-only
+python3 main.py --oil VG220 --temp 50 --flow 150
 ```
+
+### 2. Flow Range Table
+```bash
+python3 main.py --oil VG320 --temp 40 --flow-range 10 250
+```
+
+### 3. Fluid Properties Only
+```bash
+python3 main.py --oil VG220 --temp 60 --props-only
+```
+
+### 4. Orifice Correction (NEW)
+```bash
+python3 main.py --oil VG220 --temp 50 --correct \
+  --true-flow 150 \
+  --sensor-reading 120 \
+  --current-orifice 20
+```
+
+**Use case:** When you have a reference flow meter showing true flow, but the sensor reads incorrectly due to wrong orifice size. Calculates the corrected orifice diameter needed.
 
 ## Output Format
 
