@@ -335,3 +335,80 @@ def validate_operating_conditions(
         )
 
     return warnings
+
+
+def calculate_corrected_orifice(
+    true_flow_lpm: float,
+    sensor_reading_lpm: float,
+    current_orifice_mm: float,
+    oil: OilType,
+    temp_c: float,
+) -> dict[str, float]:
+    """Calculate corrected orifice diameter when sensor reads incorrectly.
+
+    This function is useful when you know:
+    - The true flow rate (measured by a reference meter)
+    - What the sensor currently reads (incorrect)
+    - The current orifice diameter
+    - The operating conditions (oil type, temperature)
+
+    It calculates what orifice diameter you should use to get accurate readings.
+
+    Args:
+        true_flow_lpm: Actual flow rate in liters per minute
+        sensor_reading_lpm: What the sensor currently displays in liters per minute
+        current_orifice_mm: Current orifice diameter in mm
+        oil: Oil type
+        temp_c: Temperature in degrees Celsius
+
+    Returns:
+        Dictionary containing:
+        - true_flow_lpm: Input true flow
+        - sensor_reading_lpm: Input sensor reading
+        - current_orifice_mm: Input current orifice
+        - corrected_orifice_mm: Recommended orifice diameter
+        - error_percent: Sensor error percentage
+        - current_beta: Beta ratio with current orifice
+        - corrected_beta: Beta ratio with corrected orifice
+        - current_dp_mbar: Current differential pressure
+        - corrected_dp_mbar: Expected differential pressure with corrected orifice
+        - current_reynolds: Current Reynolds number
+        - corrected_reynolds: Expected Reynolds number with corrected orifice
+    """
+    # Calculate the corrected orifice diameter based on true flow
+    corrected_orifice_mm = calculate_orifice_diameter(true_flow_lpm, oil, temp_c)
+
+    # Calculate error percentage
+    error_percent = ((sensor_reading_lpm - true_flow_lpm) / true_flow_lpm) * 100.0
+
+    # Calculate current operating parameters
+    current_beta = get_beta_ratio(current_orifice_mm)
+    current_dp = get_differential_pressure(
+        true_flow_lpm, current_orifice_mm, oil, temp_c
+    )
+    current_reynolds = get_reynolds_number(
+        true_flow_lpm, current_orifice_mm, oil, temp_c
+    )
+
+    # Calculate corrected operating parameters
+    corrected_beta = get_beta_ratio(corrected_orifice_mm)
+    corrected_dp = get_differential_pressure(
+        true_flow_lpm, corrected_orifice_mm, oil, temp_c
+    )
+    corrected_reynolds = get_reynolds_number(
+        true_flow_lpm, corrected_orifice_mm, oil, temp_c
+    )
+
+    return {
+        "true_flow_lpm": true_flow_lpm,
+        "sensor_reading_lpm": sensor_reading_lpm,
+        "current_orifice_mm": current_orifice_mm,
+        "corrected_orifice_mm": corrected_orifice_mm,
+        "error_percent": error_percent,
+        "current_beta": current_beta,
+        "corrected_beta": corrected_beta,
+        "current_dp_mbar": current_dp,
+        "corrected_dp_mbar": corrected_dp,
+        "current_reynolds": current_reynolds,
+        "corrected_reynolds": corrected_reynolds,
+    }

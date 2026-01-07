@@ -12,6 +12,7 @@ from typing import Optional
 from src.calibrator import (
     OilType,
     calculate_orifice_diameter,
+    calculate_corrected_orifice,
     get_beta_ratio,
     get_correction_factor,
     get_density,
@@ -203,6 +204,95 @@ def properties_only(oil: OilType, temp_c: float) -> None:
     print_footer()
 
 
+def orifice_correction(
+    oil: OilType,
+    temp_c: float,
+    true_flow_lpm: float,
+    sensor_reading_lpm: float,
+    current_orifice_mm: float,
+) -> None:
+    """Display orifice correction analysis when sensor reads incorrectly.
+
+    Args:
+        oil: Oil type
+        temp_c: Temperature in degrees Celsius
+        true_flow_lpm: Actual flow rate in liters per minute
+        sensor_reading_lpm: What the sensor currently displays
+        current_orifice_mm: Current orifice diameter in mm
+    """
+    print_header()
+
+    # Input parameters
+    print("Input Parameters:")
+    print(f"  Oil Type:        {oil.value}")
+    print(f"  Temperature:     {temp_c} °C")
+    print(f"  True Flow:       {true_flow_lpm} L/min")
+    print(f"  Sensor Reading:  {sensor_reading_lpm} L/min")
+    print(f"  Current Orifice: {current_orifice_mm} mm")
+    print()
+
+    # Fluid properties
+    format_fluid_properties(oil, temp_c)
+
+    # Calculate correction
+    result = calculate_corrected_orifice(
+        true_flow_lpm, sensor_reading_lpm, current_orifice_mm, oil, temp_c
+    )
+
+    # Display analysis
+    print("Current Situation:")
+    if result["error_percent"] > 0:
+        print(f"  Sensor reads {abs(result['error_percent']):.1f}% HIGH")
+    else:
+        print(f"  Sensor reads {abs(result['error_percent']):.1f}% LOW")
+    print(f"  Current Orifice:      {result['current_orifice_mm']:.1f} mm")
+    print(f"  Current Beta Ratio:   {result['current_beta']:.3f}")
+    print(f"  Current ΔP:           {result['current_dp_mbar']:.0f} mbar")
+    print(f"  Current Reynolds:     {result['current_reynolds']:,.0f}")
+    print()
+
+    print("Recommended Correction:")
+    print(f"  Corrected Orifice:    {result['corrected_orifice_mm']:.1f} mm")
+    print(f"  Corrected Beta Ratio: {result['corrected_beta']:.3f}")
+    print(f"  Corrected ΔP:         {result['corrected_dp_mbar']:.0f} mbar")
+    print(f"  Corrected Reynolds:   {result['corrected_reynolds']:,.0f}")
+    print()
+
+    # Calculate size change
+    size_change = (
+        (result["corrected_orifice_mm"] - result["current_orifice_mm"])
+        / result["current_orifice_mm"]
+    ) * 100.0
+
+    if abs(size_change) > 0.5:
+        if size_change > 0:
+            print(
+                f"Action: Replace orifice with one {abs(size_change):.1f}% LARGER "
+                f"({result['corrected_orifice_mm']:.1f} mm)"
+            )
+        else:
+            print(
+                f"Action: Replace orifice with one {abs(size_change):.1f}% SMALLER "
+                f"({result['corrected_orifice_mm']:.1f} mm)"
+            )
+    else:
+        print("Action: Current orifice size is acceptable (< 0.5% change needed)")
+
+    print()
+
+    # Validate corrected conditions
+    warnings = validate_operating_conditions(
+        true_flow_lpm, result["corrected_orifice_mm"], oil, temp_c
+    )
+    if warnings:
+        print("⚠ Warnings with corrected orifice:")
+        for warning in warnings:
+            print(f"  - {warning}")
+        print()
+
+    print_footer()
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments.
 
@@ -222,6 +312,9 @@ Examples:
 
   # Show fluid properties only
   %(prog)s --oil VG220 --temp 60 --props-only
+
+  # Calculate corrected orifice diameter
+  %(prog)s --oil VG220 --temp 50 --correct --true-flow 150 --sensor-reading 120 --current-orifice 20
         """,
     )
 
@@ -259,6 +352,33 @@ Examples:
         help="Show fluid properties only",
     )
 
+    parser.add_argument(
+        "--correct",
+        action="store_true",
+        help="Calculate corrected orifice diameter (requires --true-flow, --sensor-reading, --current-orifice)",
+    )
+
+    parser.add_argument(
+        "--true-flow",
+        type=float,
+        help="Actual/true flow rate in L/min (for correction mode)",
+        metavar="FLOW",
+    )
+
+    parser.add_argument(
+        "--sensor-reading",
+        type=float,
+        help="Current sensor reading in L/min (for correction mode)",
+        metavar="READING",
+    )
+
+    parser.add_argument(
+        "--current-orifice",
+        type=float,
+        help="Current orifice diameter in mm (for correction mode)",
+        metavar="DIAMETER",
+    )
+
     return parser.parse_args()
 
 
@@ -271,12 +391,32 @@ def validate_args(args: argparse.Namespace) -> Optional[str]:
     Returns:
         Error message if validation fails, None otherwise
     """
-    # Check that exactly one of flow, flow_range, or props_only is specified
-    modes = sum([args.flow is not None, args.flow_range is not None, args.props_only])
+    # Check that exactly one mode is specified
+    modes = sum([
+        args.flow is not None,
+        args.flow_range is not None,
+        args.props_only,
+        args.correct
+    ])
     if modes == 0:
-        return "Error: Must specify --flow, --flow-range, or --props-only"
+        return "Error: Must specify --flow, --flow-range, --props-only, or --correct"
     if modes > 1:
-        return "Error: Can only specify one of --flow, --flow-range, or --props-only"
+        return "Error: Can only specify one of --flow, --flow-range, --props-only, or --correct"
+
+    # Validate correction mode arguments
+    if args.correct:
+        if args.true_flow is None:
+            return "Error: --correct requires --true-flow"
+        if args.sensor_reading is None:
+            return "Error: --correct requires --sensor-reading"
+        if args.current_orifice is None:
+            return "Error: --correct requires --current-orifice"
+        if args.true_flow <= 0 or args.true_flow > 250:
+            return f"Error: True flow {args.true_flow} L/min outside valid range (0-250)"
+        if args.sensor_reading <= 0 or args.sensor_reading > 250:
+            return f"Error: Sensor reading {args.sensor_reading} L/min outside valid range (0-250)"
+        if args.current_orifice <= 0 or args.current_orifice >= 41:
+            return f"Error: Current orifice {args.current_orifice} mm outside valid range (0-41)"
 
     # Validate temperature range
     if args.temp < 20 or args.temp > 80:
@@ -323,6 +463,10 @@ def main() -> int:
         # Dispatch to appropriate function
         if args.props_only:
             properties_only(oil, args.temp)
+        elif args.correct:
+            orifice_correction(
+                oil, args.temp, args.true_flow, args.sensor_reading, args.current_orifice
+            )
         elif args.flow is not None:
             single_point_calculation(oil, args.temp, args.flow)
         elif args.flow_range is not None:

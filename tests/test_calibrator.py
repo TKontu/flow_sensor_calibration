@@ -11,6 +11,7 @@ from src.calibrator import (
     calculate_orifice_diameter,
     get_reynolds_number,
     get_differential_pressure,
+    calculate_corrected_orifice,
 )
 
 
@@ -226,3 +227,106 @@ class TestDifferentialPressure:
         dp_50 = get_differential_pressure(50.0, orifice_d, OilType.VG220, temp_c=50.0)
         dp_150 = get_differential_pressure(150.0, orifice_d, OilType.VG220, temp_c=50.0)
         assert dp_150 > dp_50
+
+
+class TestOrificeCorrection:
+    """Test orifice correction calculations for incorrect sensor readings."""
+
+    def test_corrected_orifice_larger_when_sensor_reads_low(self) -> None:
+        """When sensor reads low, we need a larger orifice."""
+        # Sensor reads 100 L/min but true flow is 150 L/min
+        result = calculate_corrected_orifice(
+            true_flow_lpm=150.0,
+            sensor_reading_lpm=100.0,
+            current_orifice_mm=20.0,
+            oil=OilType.VG220,
+            temp_c=50.0
+        )
+        # Corrected orifice should be larger than current
+        assert result["corrected_orifice_mm"] > result["current_orifice_mm"]
+
+    def test_corrected_orifice_smaller_when_sensor_reads_high(self) -> None:
+        """When sensor reads high, we need a smaller orifice."""
+        # Sensor reads 150 L/min but true flow is 100 L/min
+        result = calculate_corrected_orifice(
+            true_flow_lpm=100.0,
+            sensor_reading_lpm=150.0,
+            current_orifice_mm=25.0,
+            oil=OilType.VG220,
+            temp_c=50.0
+        )
+        # Corrected orifice should be smaller than current
+        assert result["corrected_orifice_mm"] < result["current_orifice_mm"]
+
+    def test_correction_result_has_all_fields(self) -> None:
+        """Result should contain all necessary fields."""
+        result = calculate_corrected_orifice(
+            true_flow_lpm=150.0,
+            sensor_reading_lpm=120.0,
+            current_orifice_mm=22.0,
+            oil=OilType.VG220,
+            temp_c=50.0
+        )
+        # Check all expected fields are present
+        assert "true_flow_lpm" in result
+        assert "sensor_reading_lpm" in result
+        assert "current_orifice_mm" in result
+        assert "corrected_orifice_mm" in result
+        assert "error_percent" in result
+        assert "current_beta" in result
+        assert "corrected_beta" in result
+        assert "current_dp_mbar" in result
+        assert "corrected_dp_mbar" in result
+
+    def test_error_percent_calculation(self) -> None:
+        """Error percentage should be correctly calculated."""
+        result = calculate_corrected_orifice(
+            true_flow_lpm=100.0,
+            sensor_reading_lpm=80.0,  # 20% low
+            current_orifice_mm=20.0,
+            oil=OilType.VG320,
+            temp_c=40.0
+        )
+        # Error should be around -20% (sensor reads 20% low)
+        assert math.isclose(result["error_percent"], -20.0, abs_tol=0.1)
+
+    def test_correction_with_different_oils(self) -> None:
+        """Correction should work for both oil types."""
+        # Test VG220
+        result_220 = calculate_corrected_orifice(
+            true_flow_lpm=150.0,
+            sensor_reading_lpm=130.0,
+            current_orifice_mm=23.0,
+            oil=OilType.VG220,
+            temp_c=50.0
+        )
+        assert result_220["corrected_orifice_mm"] > 0
+
+        # Test VG320
+        result_320 = calculate_corrected_orifice(
+            true_flow_lpm=150.0,
+            sensor_reading_lpm=130.0,
+            current_orifice_mm=23.0,
+            oil=OilType.VG320,
+            temp_c=50.0
+        )
+        assert result_320["corrected_orifice_mm"] > 0
+
+    def test_corrected_orifice_calculation_uses_true_flow(self) -> None:
+        """Corrected orifice should be based on true flow, not sensor reading."""
+        result = calculate_corrected_orifice(
+            true_flow_lpm=150.0,
+            sensor_reading_lpm=100.0,
+            current_orifice_mm=20.0,
+            oil=OilType.VG220,
+            temp_c=50.0
+        )
+        # Directly calculate what orifice should be for 150 L/min
+        expected_orifice = calculate_orifice_diameter(150.0, OilType.VG220, 50.0)
+
+        # Should match (within small tolerance)
+        assert math.isclose(
+            result["corrected_orifice_mm"],
+            expected_orifice,
+            rel_tol=0.01
+        )
